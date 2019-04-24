@@ -1,9 +1,7 @@
-using IW.DurableFunc.Repository;
 using IW.DurableFunctions.Contracts.Requests;
+using IW.DurableFunctions.Data.DbTypes;
 using Microsoft.Azure.WebJobs;
-using Microsoft.Extensions.Logging;
 using System;
-using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 
@@ -12,63 +10,58 @@ namespace IW.DurableFunc.RegisterUser.RegisterUserFunctions
 {
     public static class DbFunctions
     {
-        public static IDictionary<string, IRepository> repositories;
-
         [FunctionName("ValidateUsername")]
-        public static async Task<bool> ValidateUsername([ActivityTrigger] DurableActivityContext inputs, ILogger log)
+        public static async Task<bool> ValidateUsername([OrchestrationTrigger] DurableOrchestrationContext context)
         {
-            RegisterUserRequest request = inputs.GetInput<RegisterUserRequest>();
-            repositories = new Dictionary<string, IRepository>
-            {
-                { "A", new ARepository() },
-                { "B", new BRepository() },
-                { "C", new CRepository() }
-            };
-            var tasks = new Task<bool>[repositories.Count];
-            int i = 0;
-
-            foreach (string key in repositories.Keys)
-            {
-                tasks[i++] = repositories[key].ValidateUsername(request.Username, log);
-            }
+            string username = context.GetInput<string>();
+           
+            var tasks = new Task<bool>[2];
+            tasks[0] = context.CallActivityWithRetryAsync<bool>("UsernameExistA", new RetryOptions(TimeSpan.FromSeconds(5), 3), username);
+            tasks[1] = context.CallActivityWithRetryAsync<bool>("UsernameExistB", new RetryOptions(TimeSpan.FromSeconds(5), 3), username);
 
             var res = await Task.WhenAll(tasks);
 
-            return res.All(x => true);
+            return res.All(x => !x);
         }
 
         [FunctionName("CreateUserInDB")]
-        public static async Task<bool> CreateUserInDB([ActivityTrigger] DurableActivityContext inputs, ILogger log)
+        public static async Task<bool> CreateUserInDB([OrchestrationTrigger] DurableOrchestrationContext context)
         {
-            int rnd = new Random().Next(50);
-
-            await Task.Delay(1000);
-
-            if (rnd % 2 != 0)
+            RegisterUserRequest request = context.GetInput<RegisterUserRequest>();
+            var dbRequest = new User
             {
-                throw new Exception();
-            }               
-            else
-            {
-                return true;
-            }
+                firstName = request.FirstName,
+                lastName = request.LastName,
+                username = request.Username,
+                email = request.Email,
+                password = request.Password,
+                phoneNumber = request.PhoneNumber
+            };
+
+            var tasks = new Task<bool>[2];
+            tasks[0] = context.CallActivityWithRetryAsync<bool>("CreateUserA", new RetryOptions(TimeSpan.FromSeconds(5), 3), dbRequest);
+            tasks[1] = context.CallActivityWithRetryAsync<bool>("CreateUserB", new RetryOptions(TimeSpan.FromSeconds(5), 3), dbRequest);
+
+            var res = await Task.WhenAll(tasks);
+
+            return res.All(x => x);
         }
 
         [FunctionName("DeleteUserFromDB")]
-        public static async Task<bool> DeleteUserFromDB([ActivityTrigger] DurableActivityContext inputs, ILogger log)
+        public static async Task<bool> DeleteUserFromDB([OrchestrationTrigger] DurableOrchestrationContext context)
         {
-            int rnd = new Random().Next(50);
+            string username = context.GetInput<string>();
+            
+            var idA = await context.CallActivityWithRetryAsync<string>("GetIdA", new RetryOptions(TimeSpan.FromSeconds(5), 3), username);
+            var idB = await context.CallActivityWithRetryAsync<string>("GetIdB", new RetryOptions(TimeSpan.FromSeconds(5), 3), username);
 
-            await Task.Delay(1000);
+            var tasks = new Task<bool>[2];
+            tasks[0] = context.CallActivityWithRetryAsync<bool>("DeleteUserA", new RetryOptions(TimeSpan.FromSeconds(5), 3), idA);
+            tasks[1] = context.CallActivityWithRetryAsync<bool>("DeleteUserB", new RetryOptions(TimeSpan.FromSeconds(5), 3), idB);
 
-            if (rnd % 2 != 0)
-            {
-                throw new Exception();
-            }
-            else
-            {
-                return true;
-            }
+            var res = await Task.WhenAll(tasks);
+
+            return res.All(x => x);
         }
     }
 }

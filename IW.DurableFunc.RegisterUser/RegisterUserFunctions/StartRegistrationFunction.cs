@@ -20,9 +20,13 @@ namespace IW.DurableFunc.RegisterUser
                 throw new ArgumentNullException(nameof(req), "Request required");
             }
 
-            var isUnique = await context.CallActivityAsync<bool>("ValidateUsername", req);
+            var isUnique = await context.CallSubOrchestratorAsync<bool>("ValidateUsername", req.Username);
             bool authorized = false;
 
+            if (!isUnique)
+            {
+                return new RegisterUserResponse { Status = false };
+            }
             if (isUnique)
             {
                 var instanceId = Guid.NewGuid().ToString("N");
@@ -35,12 +39,9 @@ namespace IW.DurableFunc.RegisterUser
             }
 
             if (!authorized)
-                return new RegisterUserResponse { CodeConfirmed = authorized };
+                return new RegisterUserResponse { Status = authorized };
 
-            bool dbStatus = await context.CallActivityWithRetryAsync<bool>(
-                "CreateUserInDB",
-                new RetryOptions(firstRetryInterval: TimeSpan.FromSeconds(5), maxNumberOfAttempts: 3),
-                req);
+            bool dbStatus = await context.CallSubOrchestratorAsync<bool>("CreateUserInDB", req); ;
 
             if (dbStatus)
             {
@@ -63,7 +64,7 @@ namespace IW.DurableFunc.RegisterUser
             }
             else
             {
-                bool oktaStatus = await context.CallActivityWithRetryAsync<bool>("DeleteUserFromDB", new RetryOptions(TimeSpan.FromSeconds(5), 3), req);
+                bool deleteFromDb = await context.CallSubOrchestratorAsync<bool>("DeleteUserFromDB", req.Username);
                 context.SetCustomStatus(new
                 {
                     context.InstanceId,
@@ -73,7 +74,7 @@ namespace IW.DurableFunc.RegisterUser
 
             await context.CallActivityAsync<SendGridMessage>("SendConfirmationEmailActivity", req.Email);
 
-            return new RegisterUserResponse { CodeConfirmed = authorized };
+            return new RegisterUserResponse { Status = authorized };
         }
     }
 }

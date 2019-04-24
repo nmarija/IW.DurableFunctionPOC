@@ -2,6 +2,6 @@
 {
     public class RegisterUserResponse
     {
-        public bool CodeConfirmed { get; set; }
+        public bool Status { get; set; }
     }
 }
